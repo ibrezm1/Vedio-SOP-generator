@@ -8,6 +8,8 @@ This contains everything you need to run your app locally.
 
 View your app in AI Studio: https://ai.studio/apps/ded086d3-a18a-47c2-9b51-9592467a1910
 
+View the deployed app: https://ibrezm1.github.io/Vedio-SOP-generator
+
 ## Run Locally
 
 **Prerequisites:**  Node.js
