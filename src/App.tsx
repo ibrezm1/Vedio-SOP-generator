@@ -255,6 +255,14 @@ export default function App() {
         captureFrame();
       } else if (e.code === 'KeyP') {
         togglePlay();
+      } else if (e.code === 'ArrowRight') {
+        if (videoRef.current) {
+          videoRef.current.currentTime = Math.min(videoRef.current.duration || 0, videoRef.current.currentTime + 3);
+        }
+      } else if (e.code === 'ArrowLeft') {
+        if (videoRef.current) {
+          videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 3);
+        }
       }
     };
 
