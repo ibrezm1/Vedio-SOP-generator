@@ -19,7 +19,8 @@ import {
   Loader2,
   Upload,
   Video,
-  Download
+  Download,
+  MonitorUp
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import JSZip from 'jszip';
@@ -44,6 +45,7 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [hasStarted, setHasStarted] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -53,6 +55,14 @@ export default function App() {
   const audioChunksRef = useRef<Blob[]>([]);
   const recognitionRef = useRef<any>(null);
   const lastTranscriptIndexRef = useRef(0);
+  const streamRef = useRef<MediaStream | null>(null);
+  const pipWindowRef = useRef<any>(null);
+  const isRecordingRef = useRef(false);
+
+  // Sync ref for global access
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
 
   // Auto-scroll sidebar when steps change
   useEffect(() => {
@@ -64,11 +74,17 @@ export default function App() {
     }
   }, [steps.length]);
 
-  // Cleanup Blob URLs to prevent memory leaks
+  // Cleanup Blob URLs and Streams to prevent memory leaks
   useEffect(() => {
     return () => {
       if (videoSource && videoSource.startsWith('blob:')) {
         URL.revokeObjectURL(videoSource);
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+      if (pipWindowRef.current) {
+        pipWindowRef.current.close();
       }
     };
   }, [videoSource]);
@@ -87,6 +103,11 @@ export default function App() {
       setHasStarted(false);
       setCurrentTime(0);
       setDuration(0);
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+      stopScreenShareInternal();
     } else if (file) {
       alert("Please upload a valid MP4 file.");
     }
@@ -95,6 +116,8 @@ export default function App() {
   // Toggle Play/Pause
   const togglePlay = () => {
     if (!videoRef.current) return;
+    if (isScreenSharing) return; // Prevent pause during live screen share
+    
     if (isPlaying) {
       videoRef.current.pause();
     } else {
@@ -234,6 +257,182 @@ export default function App() {
       }
     }
   };
+
+  // Expose toggle to window for PiP to trigger
+  useEffect(() => {
+    (window as any).toggleRecordingGlobal = () => {
+      if (isRecordingRef.current) {
+        stopRecording();
+      } else {
+        startRecording();
+      }
+    };
+  }, [stopRecording, startRecording]);
+
+  const stopScreenShareInternal = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (pipWindowRef.current) {
+      pipWindowRef.current.close();
+      pipWindowRef.current = null;
+    }
+    setIsScreenSharing(false);
+    if (videoRef.current && videoRef.current.srcObject) {
+      videoRef.current.srcObject = null;
+    }
+    setHasStarted(false);
+    setIsPlaying(false);
+  }, []);
+
+  const startScreenShare = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ 
+        video: { displaySurface: 'monitor' },
+        audio: true
+      });
+      
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play();
+      }
+      
+      setIsScreenSharing(true);
+      setVideoSource("");
+      setSteps([]); 
+      setAudioBlob(null);
+      setGeneratedSOP(null);
+      setTranscript("");
+      lastTranscriptIndexRef.current = 0;
+      setIsPlaying(true);
+      setHasStarted(true);
+
+      // Listen for browser-native stop
+      stream.getVideoTracks()[0].addEventListener('ended', stopScreenShareInternal);
+
+      // Open PiP Window
+      if ('documentPictureInPicture' in window) {
+        try {
+          const pipWindow = await (window as any).documentPictureInPicture.requestWindow({
+            width: 220,
+            height: 260
+          });
+          pipWindowRef.current = pipWindow;
+
+          // Copy stylesheets
+          const stylesheets = Array.from(document.styleSheets);
+          for (let sheet of stylesheets) {
+            try {
+              if (sheet.href) {
+                const link = pipWindow.document.createElement('link');
+                link.rel = 'stylesheet';
+                link.href = sheet.href;
+                pipWindow.document.head.appendChild(link);
+              } else {
+                const style = pipWindow.document.createElement('style');
+                let css = '';
+                Array.from(sheet.cssRules).forEach(rule => css += rule.cssText);
+                style.textContent = css;
+                pipWindow.document.head.appendChild(style);
+              }
+            } catch (e) {
+              console.warn("Could not copy stylesheet to PiP window", e);
+            }
+          }
+
+          // Generate PiP UI
+          pipWindow.document.body.className = "bg-[#09090b] text-white font-sans h-full flex flex-col p-4 m-0 overflow-hidden";
+          
+          const container = pipWindow.document.createElement('div');
+          container.className = "flex flex-col gap-3 flex-1 justify-center";
+          
+          container.innerHTML = `
+            <div class="text-center mb-4">
+              <h3 class="text-base font-bold text-zinc-100 mb-1">SOP Capture</h3>
+              <p class="text-[10px] text-zinc-400 flex items-center justify-center gap-1">
+                <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                Screen sharing active
+              </p>
+            </div>
+            
+            <button id="pip-capture-btn" class="w-full flex items-center justify-center px-3 py-2 bg-white text-black hover:bg-zinc-200 rounded-lg font-bold text-sm transition-all shadow-xl active:scale-95">
+              <span>Capture Frame</span>
+            </button>
+            
+            <button id="pip-voice-btn" class="w-full flex items-center justify-center px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg font-bold text-sm transition-all border border-zinc-700 active:scale-95">
+              <span id="pip-voice-text">Start Notes</span>
+            </button>
+
+            <div class="flex-1 mt-2"></div>
+
+            <button id="pip-stop-btn" class="w-full flex items-center justify-center px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-lg font-bold text-sm transition-all border border-red-500/20 active:scale-95">
+              <span>Stop Session</span>
+            </button>
+          `;
+          
+          pipWindow.document.body.appendChild(container);
+
+          pipWindow.document.getElementById('pip-capture-btn')?.addEventListener('click', () => {
+            (window as any).captureFrameGlobal();
+          });
+          
+          pipWindow.document.getElementById('pip-voice-btn')?.addEventListener('click', () => {
+            if ((window as any).toggleRecordingGlobal) {
+              (window as any).toggleRecordingGlobal();
+            }
+          });
+
+          pipWindow.document.getElementById('pip-stop-btn')?.addEventListener('click', () => {
+            if ((window as any).stopScreenShareGlobal) {
+              (window as any).stopScreenShareGlobal();
+            }
+          });
+
+          pipWindow.addEventListener('pagehide', () => {
+            if ((window as any).stopScreenShareGlobal) {
+              (window as any).stopScreenShareGlobal();
+            }
+          });
+
+        } catch (err) {
+          console.error("PiP not supported or blocked", err);
+        }
+      }
+      
+    } catch (err) {
+      console.error("Error starting screen share:", err);
+    }
+  };
+
+  // Expose global methods for PiP
+  useEffect(() => {
+    (window as any).captureFrameGlobal = captureFrame;
+  }, [captureFrame]);
+
+  useEffect(() => {
+    (window as any).stopScreenShareGlobal = stopScreenShareInternal;
+  }, [stopScreenShareInternal]);
+
+  // Sync PiP UI with recording state
+  useEffect(() => {
+    if (pipWindowRef.current) {
+      const doc = pipWindowRef.current.document;
+      const voiceBtn = doc.getElementById('pip-voice-btn');
+      const voiceText = doc.getElementById('pip-voice-text');
+      
+      if (voiceBtn && voiceText) {
+        if (isRecording) {
+          voiceBtn.className = "w-full flex items-center justify-center px-3 py-2 bg-red-500 hover:bg-red-400 text-white rounded-lg font-bold text-sm transition-all shadow-lg shadow-red-500/20 active:scale-95 animate-pulse";
+          voiceText.textContent = "Stop Notes";
+        } else {
+          voiceBtn.className = "w-full flex items-center justify-center px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg font-bold text-sm transition-all border border-zinc-700 active:scale-95";
+          voiceText.textContent = "Start Notes";
+        }
+      }
+    }
+  }, [isRecording]);
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -451,7 +650,9 @@ The sequence has been analyzed and synchronized for SOP production.
           <div className="relative group flex-1 bg-zinc-900 rounded-2xl overflow-hidden border border-zinc-800 shadow-2xl flex items-center justify-center">
             <video 
               ref={videoRef}
-              src={videoSource}
+              src={videoSource || undefined}
+              autoPlay={isScreenSharing}
+              muted={isScreenSharing}
               className="w-full h-full object-contain cursor-crosshair"
               crossOrigin="anonymous"
               onPlay={() => {
@@ -463,9 +664,9 @@ The sequence has been analyzed and synchronized for SOP production.
               onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
             />
             
-            {/* Overlay Instructions (Visible only when no video is uploaded) */}
+            {/* Overlay Instructions (Visible only when no video is uploaded and not sharing) */}
             <AnimatePresence>
-              {!videoSource && (
+              {!videoSource && !isScreenSharing && (
                 <motion.div 
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -482,16 +683,30 @@ The sequence has been analyzed and synchronized for SOP production.
                     </h3>
                     
                     <p className="text-sm text-zinc-400 leading-relaxed mb-8">
-                      Upload an MP4 recording of the task you want to transform into an SOP.
+                      Upload an MP4 recording or share your screen directly to create an SOP.
                     </p>
 
-                    <div className="flex flex-col gap-3">
+                    <div className="flex flex-col gap-4">
                       <button 
                         onClick={() => fileInputRef.current?.click()}
                         className="flex items-center justify-center gap-2 px-6 py-3 bg-white text-black hover:bg-zinc-200 rounded-xl font-bold transition-all shadow-xl active:scale-95"
                       >
                         <Upload size={20} />
                         <span>Upload MP4 Recording</span>
+                      </button>
+                      
+                      <div className="flex items-center gap-3 text-zinc-500 text-sm w-full">
+                        <div className="flex-1 h-px bg-zinc-800"></div>
+                        <span>OR</span>
+                        <div className="flex-1 h-px bg-zinc-800"></div>
+                      </div>
+
+                      <button 
+                        onClick={startScreenShare}
+                        className="flex items-center justify-center gap-2 px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl font-bold transition-all border border-zinc-700 active:scale-95"
+                      >
+                        <MonitorUp size={20} />
+                        <span>Share Screen</span>
                       </button>
                     </div>
                   </div>
@@ -543,14 +758,18 @@ The sequence has been analyzed and synchronized for SOP production.
                 className="bg-zinc-900/80 backdrop-blur-xl border border-zinc-700/50 rounded-full py-2 px-6 flex items-center shadow-2xl gap-4"
                 onClick={(e) => e.stopPropagation()} // Prevent capture when clicking controls
               >
-                <button 
-                  onClick={(e) => { e.stopPropagation(); togglePlay(); }}
-                  className="p-2 hover:bg-zinc-700/50 rounded-full text-white transition-all transform active:scale-95"
-                >
-                  {isPlaying ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
-                </button>
-                
-                <div className="h-6 w-px bg-zinc-700/50" />
+                {!isScreenSharing && (
+                  <>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); togglePlay(); }}
+                      className="p-2 hover:bg-zinc-700/50 rounded-full text-white transition-all transform active:scale-95"
+                    >
+                      {isPlaying ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
+                    </button>
+                    
+                    <div className="h-6 w-px bg-zinc-700/50" />
+                  </>
+                )}
                 
                 <button 
                   onClick={(e) => { e.stopPropagation(); captureFrame(); }}
@@ -578,6 +797,19 @@ The sequence has been analyzed and synchronized for SOP production.
                     <Square size={18} fill="currentColor" />
                     <span>Stop Recording</span>
                   </button>
+                )}
+
+                {isScreenSharing && (
+                  <>
+                    <div className="h-6 w-px bg-zinc-700/50" />
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); stopScreenShareInternal(); }}
+                      className="flex items-center gap-2 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-500 rounded-full transition-all text-sm font-medium border border-red-500/30"
+                    >
+                      <Square size={18} fill="currentColor" />
+                      <span>Stop Sharing</span>
+                    </button>
+                  </>
                 )}
               </div>
             </div>
