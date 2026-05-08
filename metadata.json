@@ -1,0 +1,8 @@
+{
+  "name": "AI SOP Architect",
+  "description": "Capture video steps and record voice to automatically generate detailed Standard Operating Procedures.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": []
+}
