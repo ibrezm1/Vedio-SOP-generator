@@ -1,6 +1,6 @@
-import { Play, Pause, Camera, Mic, Square, Loader2, FileText, Info, Upload, Video, MonitorUp } from 'lucide-react';
+import { Play, Pause, Camera, Mic, Square, Loader2, FileText, Info, Upload, Video, MonitorUp, Type } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { RefObject } from 'react';
+import { RefObject, useState } from 'react';
 
 interface VideoPlayerProps {
   videoRef: RefObject<HTMLVideoElement | null>;
@@ -27,6 +27,7 @@ interface VideoPlayerProps {
   setIsPlaying: (playing: boolean) => void;
   generateSOP: () => void;
   triggerFileUpload: () => void;
+  addTextNote: (text: string) => void;
 }
 
 export function VideoPlayer({
@@ -52,8 +53,12 @@ export function VideoPlayer({
   setHasStarted,
   setIsPlaying,
   generateSOP,
-  triggerFileUpload
+  triggerFileUpload,
+  addTextNote
 }: VideoPlayerProps) {
+
+  const [isTypingNote, setIsTypingNote] = useState(false);
+  const [noteText, setNoteText] = useState('');
 
   const formatTime = (time: number) => {
     const mins = Math.floor(time / 60);
@@ -171,6 +176,43 @@ export function VideoPlayer({
             )}
           </AnimatePresence>
 
+          <AnimatePresence>
+            {isTypingNote && (
+              <motion.div 
+                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="bg-zinc-900/90 backdrop-blur-xl border border-zinc-700/50 rounded-2xl p-2 w-full max-w-md shadow-2xl flex items-center gap-2"
+                onClick={e => e.stopPropagation()}
+              >
+                <input 
+                  type="text"
+                  autoFocus
+                  value={noteText}
+                  onChange={e => setNoteText(e.target.value)}
+                  onKeyDown={e => {
+                    e.stopPropagation();
+                    if (e.key === 'Enter' && noteText.trim()) {
+                      addTextNote(noteText);
+                      setNoteText('');
+                      setIsTypingNote(false);
+                    } else if (e.key === 'Escape') {
+                      setIsTypingNote(false);
+                    }
+                  }}
+                  placeholder="Type your note and press Enter..."
+                  className="flex-1 bg-transparent text-white px-3 py-1.5 focus:outline-none text-sm placeholder:text-zinc-500"
+                />
+                <button 
+                  onClick={() => setIsTypingNote(false)}
+                  className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 transition-colors"
+                >
+                  <Square size={14} />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <div 
             className="bg-zinc-900/80 backdrop-blur-xl border border-zinc-700/50 rounded-full py-2 px-6 flex items-center shadow-2xl gap-4"
             onClick={(e) => e.stopPropagation()} // Prevent capture when clicking controls
@@ -199,13 +241,22 @@ export function VideoPlayer({
             <div className="h-6 w-px bg-zinc-700/50" />
 
             {!isRecording ? (
-              <button 
-                onClick={(e) => { e.stopPropagation(); startRecording(); }}
-                className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-full transition-all text-sm font-medium border border-zinc-700"
-              >
-                <Mic size={18} />
-                <span>Start Voiceover</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={(e) => { e.stopPropagation(); startRecording(); }}
+                  className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-full transition-all text-sm font-medium border border-zinc-700"
+                >
+                  <Mic size={18} />
+                  <span>Start Voiceover</span>
+                </button>
+                <button 
+                  onClick={(e) => { e.stopPropagation(); setIsTypingNote(true); }}
+                  className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-full transition-all text-sm font-medium border border-zinc-700"
+                >
+                  <Type size={18} />
+                  <span>Type Note</span>
+                </button>
+              </div>
             ) : (
               <button 
                 onClick={(e) => { e.stopPropagation(); stopRecording(); }}

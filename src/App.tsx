@@ -464,6 +464,33 @@ The sequence has been analyzed and synchronized for SOP production.
     setSteps(prev => prev.filter(s => s.id !== id));
   };
 
+  const moveStep = (index: number, direction: 'up' | 'down') => {
+    setSteps(prev => {
+      const newSteps = [...prev];
+      if (direction === 'up' && index > 0) {
+        [newSteps[index - 1], newSteps[index]] = [newSteps[index], newSteps[index - 1]];
+      } else if (direction === 'down' && index < newSteps.length - 1) {
+        [newSteps[index + 1], newSteps[index]] = [newSteps[index], newSteps[index + 1]];
+      }
+      return newSteps;
+    });
+  };
+
+  const updateStepText = (id: string, text: string) => {
+    setSteps(prev => prev.map(s => s.id === id ? { ...s, text } : s));
+  };
+
+  const addTextNote = (text: string) => {
+    if (!videoRef.current || !text.trim()) return;
+    const newStep: SequenceStep = {
+      id: Math.random().toString(36).substr(2, 9),
+      type: 'text',
+      timestamp: videoRef.current.currentTime,
+      text: text.trim()
+    };
+    setSteps(prev => [...prev, newStep]);
+  };
+
   const downloadZIP = async () => {
     if (steps.length === 0) return;
     
@@ -611,11 +638,14 @@ The sequence has been analyzed and synchronized for SOP production.
           setIsPlaying={setIsPlaying}
           generateSOP={generateSOP}
           triggerFileUpload={() => fileInputRef.current?.click()}
+          addTextNote={addTextNote}
         />
         
         <Sidebar 
           steps={steps}
           removeStep={removeStep}
+          moveStep={moveStep}
+          updateStepText={updateStepText}
           sidebarRef={sidebarRef}
         />
       </main>
