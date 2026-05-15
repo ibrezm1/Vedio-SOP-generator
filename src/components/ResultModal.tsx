@@ -4,9 +4,10 @@ import { motion, AnimatePresence } from 'motion/react';
 interface ResultModalProps {
   generatedSOP: string | null;
   setGeneratedSOP: (sop: string | null) => void;
+  openPreProcessing: () => void;
 }
 
-export function ResultModal({ generatedSOP, setGeneratedSOP }: ResultModalProps) {
+export function ResultModal({ generatedSOP, setGeneratedSOP, openPreProcessing }: ResultModalProps) {
   return (
     <AnimatePresence>
       {generatedSOP && (
@@ -47,7 +48,13 @@ export function ResultModal({ generatedSOP, setGeneratedSOP }: ResultModalProps)
               </div>
             </div>
             
-            <div className="p-4 border-t border-zinc-800 bg-zinc-900/50 flex justify-center">
+            <div className="p-4 border-t border-zinc-800 bg-zinc-900/50 flex flex-col items-center gap-3">
+              <button 
+                onClick={openPreProcessing}
+                className="flex items-center gap-2 px-8 py-3 bg-orange-500 hover:bg-orange-400 text-white rounded-xl font-bold transition-all shadow-lg shadow-orange-500/20 active:scale-95"
+              >
+                <span>Review & Edit Images for Export</span>
+              </button>
               <p className="text-[10px] text-zinc-600 uppercase tracking-widest font-mono">
                 Full JSON payload logged to console for LLM consumption
               </p>

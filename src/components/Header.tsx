@@ -1,4 +1,4 @@
-import { Zap, Download, Loader2, Trash2 } from 'lucide-react';
+import { Zap, Download, Loader2, Trash2, Layers } from 'lucide-react';
 import { ChangeEvent, RefObject } from 'react';
 import { SequenceStep } from '../types';
 
@@ -13,6 +13,7 @@ interface HeaderProps {
   downloadZIP: () => void;
   fileInputRef: RefObject<HTMLInputElement | null>;
   handleFileUpload: (event: ChangeEvent<HTMLInputElement>) => void;
+  openPreProcessing: () => void;
 }
 
 export function Header({
@@ -25,7 +26,8 @@ export function Header({
   isRecording,
   downloadZIP,
   fileInputRef,
-  handleFileUpload
+  handleFileUpload,
+  openPreProcessing
 }: HeaderProps) {
   return (
     <header className="h-14 border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-md flex items-center px-6 justify-between shrink-0">
@@ -53,6 +55,14 @@ export function Header({
           />
           Extract Metadata (OCR)
         </label>
+        <button 
+          onClick={openPreProcessing}
+          disabled={steps.filter(s => s.type === 'visual').length === 0}
+          className="flex items-center gap-2 px-3 py-1.5 bg-orange-500/10 hover:bg-orange-500/20 text-orange-500 rounded-lg text-xs font-medium border border-orange-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Layers size={14} />
+          <span>Review Images</span>
+        </button>
         <button 
           onClick={downloadZIP}
           disabled={steps.length === 0 || isExporting}
