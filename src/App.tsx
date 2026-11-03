@@ -5,7 +5,7 @@ import { Sidebar } from './components/Sidebar';
 import { VideoPlayer } from './components/VideoPlayer';
 import { ResultModal } from './components/ResultModal';
 import { PreProcessingModal } from './components/PreProcessingModal';
-import { SequenceStep } from './types';
+import { SequenceStep, CropRegion } from './types';
 
 export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -24,6 +24,15 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState("");
   const [isPreProcessingOpen, setIsPreProcessingOpen] = useState(false);
+  const [activeCropRegion, setActiveCropRegion] = useState<CropRegion | null>(null);
+  const [lastCropRegion, setLastCropRegion] = useState<CropRegion | null>(null);
+  const [isSnipMode, setIsSnipMode] = useState(false);
+  const [isDefiningROI, setIsDefiningROI] = useState(false);
+  const activeCropRegionRef = useRef<CropRegion | null>(null);
+
+  useEffect(() => {
+    activeCropRegionRef.current = activeCropRegion;
+  }, [activeCropRegion]);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -78,6 +87,9 @@ export default function App() {
       setHasStarted(false);
       setCurrentTime(0);
       setDuration(0);
+      setActiveCropRegion(null);
+      setIsSnipMode(false);
+      setIsDefiningROI(false);
       
       if (videoRef.current) {
         videoRef.current.srcObject = null;
@@ -101,7 +113,7 @@ export default function App() {
     setIsPlaying(!isPlaying);
   };
 
-  const captureFrame = useCallback(() => {
+  const captureFrame = useCallback((customCrop?: CropRegion) => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
@@ -109,9 +121,22 @@ export default function App() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const crop = customCrop || activeCropRegionRef.current;
+
+    if (crop && crop.width > 0 && crop.height > 0) {
+      const sx = crop.x * video.videoWidth;
+      const sy = crop.y * video.videoHeight;
+      const sw = crop.width * video.videoWidth;
+      const sh = crop.height * video.videoHeight;
+
+      canvas.width = Math.max(1, Math.round(sw));
+      canvas.height = Math.max(1, Math.round(sh));
+      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+    } else {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    }
 
     const dataUrl = canvas.toDataURL('image/png');
     
@@ -130,13 +155,22 @@ export default function App() {
     setSteps(prev => [...prev, newStep]);
   }, [transcript]);
 
+  const handleSnipComplete = useCallback((region: CropRegion) => {
+    setLastCropRegion(region);
+    captureFrame(region);
+    setIsSnipMode(false);
+  }, [captureFrame]);
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    const handleClick = () => captureFrame();
+    const handleClick = () => {
+      if (isSnipMode || isDefiningROI) return;
+      captureFrame();
+    };
     video.addEventListener('click', handleClick);
     return () => video.removeEventListener('click', handleClick);
-  }, [captureFrame]);
+  }, [captureFrame, isSnipMode, isDefiningROI]);
 
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -267,6 +301,9 @@ export default function App() {
       lastTranscriptIndexRef.current = 0;
       setIsPlaying(true);
       setHasStarted(true);
+      setActiveCropRegion(null);
+      setIsSnipMode(false);
+      setIsDefiningROI(false);
 
       stream.getVideoTracks()[0].addEventListener('ended', stopScreenShareInternal);
 
@@ -310,6 +347,7 @@ export default function App() {
                 <span class="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
                 Screen sharing active
               </p>
+              <p id="pip-crop-status" class="text-[9px] text-zinc-500 mt-1">Full screen capture</p>
             </div>
             
             <button id="pip-capture-btn" class="w-full flex items-center justify-center px-3 py-2 bg-white text-black hover:bg-zinc-200 rounded-lg font-bold text-sm transition-all shadow-xl active:scale-95">
@@ -388,6 +426,22 @@ export default function App() {
   }, [isRecording]);
 
   useEffect(() => {
+    if (pipWindowRef.current) {
+      const doc = pipWindowRef.current.document;
+      const cropStatus = doc.getElementById('pip-crop-status');
+      if (cropStatus) {
+        if (activeCropRegion) {
+          cropStatus.textContent = "Region crop active";
+          cropStatus.className = "text-[9px] text-orange-400 font-medium mt-1";
+        } else {
+          cropStatus.textContent = "Full screen capture";
+          cropStatus.className = "text-[9px] text-zinc-500 mt-1";
+        }
+      }
+    }
+  }, [activeCropRegion]);
+
+  useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
@@ -402,6 +456,9 @@ export default function App() {
         captureFrame();
       } else if (e.code === 'KeyP') {
         togglePlay();
+      } else if (e.code === 'KeyS') {
+        setIsSnipMode(prev => !prev);
+        setIsDefiningROI(false);
       } else if (e.code === 'ArrowRight') {
         if (videoRef.current) {
           videoRef.current.currentTime = Math.min(videoRef.current.duration || 0, videoRef.current.currentTime + 3);
@@ -646,6 +703,14 @@ The sequence has been analyzed and synchronized for SOP production.
           generateSOP={generateSOP}
           triggerFileUpload={() => fileInputRef.current?.click()}
           addTextNote={addTextNote}
+          activeCropRegion={activeCropRegion}
+          setActiveCropRegion={setActiveCropRegion}
+          lastCropRegion={lastCropRegion}
+          isSnipMode={isSnipMode}
+          setIsSnipMode={setIsSnipMode}
+          isDefiningROI={isDefiningROI}
+          setIsDefiningROI={setIsDefiningROI}
+          onSnipComplete={handleSnipComplete}
         />
         
         <Sidebar 

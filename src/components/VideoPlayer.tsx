@@ -1,6 +1,8 @@
-import { Play, Pause, Camera, Mic, Square, Loader2, FileText, Info, Upload, Video, MonitorUp, Type } from 'lucide-react';
+import { Play, Pause, Camera, Mic, Square, Loader2, FileText, Info, Upload, Video, MonitorUp, Type, Scissors, Crop, X, RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RefObject, useState } from 'react';
+import { CropRegion } from '../types';
+import { VideoCropOverlay } from './VideoCropOverlay';
 
 interface VideoPlayerProps {
   videoRef: RefObject<HTMLVideoElement | null>;
@@ -16,7 +18,7 @@ interface VideoPlayerProps {
   stepCount: number;
   
   togglePlay: () => void;
-  captureFrame: () => void;
+  captureFrame: (customCrop?: CropRegion) => void;
   startRecording: () => void;
   stopRecording: () => void;
   startScreenShare: () => void;
@@ -28,6 +30,15 @@ interface VideoPlayerProps {
   generateSOP: () => void;
   triggerFileUpload: () => void;
   addTextNote: (text: string) => void;
+
+  activeCropRegion: CropRegion | null;
+  setActiveCropRegion: (region: CropRegion | null) => void;
+  lastCropRegion: CropRegion | null;
+  isSnipMode: boolean;
+  setIsSnipMode: (snip: boolean | ((prev: boolean) => boolean)) => void;
+  isDefiningROI: boolean;
+  setIsDefiningROI: (roi: boolean | ((prev: boolean) => boolean)) => void;
+  onSnipComplete: (region: CropRegion) => void;
 }
 
 export function VideoPlayer({
@@ -54,7 +65,15 @@ export function VideoPlayer({
   setIsPlaying,
   generateSOP,
   triggerFileUpload,
-  addTextNote
+  addTextNote,
+  activeCropRegion,
+  setActiveCropRegion,
+  lastCropRegion,
+  isSnipMode,
+  setIsSnipMode,
+  isDefiningROI,
+  setIsDefiningROI,
+  onSnipComplete
 }: VideoPlayerProps) {
 
   const [isTypingNote, setIsTypingNote] = useState(false);
@@ -85,6 +104,23 @@ export function VideoPlayer({
           onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
           onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
         />
+
+        {/* Crop / Snip Overlay */}
+        {(videoSource || isScreenSharing) && (
+          <VideoCropOverlay
+            videoRef={videoRef}
+            activeCropRegion={activeCropRegion}
+            isSnipMode={isSnipMode}
+            isDefiningROI={isDefiningROI}
+            onSnipComplete={onSnipComplete}
+            onROIComplete={(region) => {
+              setActiveCropRegion(region);
+              setIsDefiningROI(false);
+            }}
+            onCancelSnip={() => setIsSnipMode(false)}
+            onCancelROI={() => setIsDefiningROI(false)}
+          />
+        )}
         
         {/* Overlay Instructions (Visible only when no video is uploaded and not sharing) */}
         <AnimatePresence>
@@ -137,7 +173,7 @@ export function VideoPlayer({
         </AnimatePresence>
 
         {/* Video Controls bar */}
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-full max-w-2xl px-6 flex flex-col gap-4 items-center">
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-full max-w-2xl px-6 flex flex-col gap-4 items-center z-30">
           {/* Seek Bar */}
           {videoSource && (
             <div className="w-full px-4 flex items-center gap-3 bg-zinc-900/50 backdrop-blur-md py-2 rounded-full border border-zinc-700/30">
@@ -214,7 +250,7 @@ export function VideoPlayer({
           </AnimatePresence>
 
           <div 
-            className="bg-zinc-900/80 backdrop-blur-xl border border-zinc-700/50 rounded-full py-2 px-6 flex items-center shadow-2xl gap-4"
+            className="bg-zinc-900/80 backdrop-blur-xl border border-zinc-700/50 rounded-full py-2 px-6 flex items-center shadow-2xl gap-3"
             onClick={(e) => e.stopPropagation()} // Prevent capture when clicking controls
           >
             {!isScreenSharing && (
@@ -222,6 +258,7 @@ export function VideoPlayer({
                 <button 
                   onClick={(e) => { e.stopPropagation(); togglePlay(); }}
                   className="p-2 hover:bg-zinc-700/50 rounded-full text-white transition-all transform active:scale-95"
+                  title={isPlaying ? "Pause (P)" : "Play (P)"}
                 >
                   {isPlaying ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
                 </button>
@@ -233,10 +270,81 @@ export function VideoPlayer({
             <button 
               onClick={(e) => { e.stopPropagation(); captureFrame(); }}
               className="flex items-center gap-2 px-4 py-2 bg-orange-500 hover:bg-orange-400 text-white rounded-full transition-all text-sm font-medium shadow-lg shadow-orange-500/20 transform active:scale-95"
+              title="Capture full frame or active region (Shortcut: C)"
             >
               <Camera size={18} />
               <span>Capture Frame</span>
             </button>
+
+            {/* Quick Snip Tool */}
+            {(videoSource || isScreenSharing) && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsSnipMode(prev => !prev);
+                  setIsDefiningROI(false);
+                }}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-full transition-all text-sm font-medium border transform active:scale-95 ${
+                  isSnipMode
+                    ? 'bg-orange-500 text-white border-orange-400 shadow-lg shadow-orange-500/20 animate-pulse'
+                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700'
+                }`}
+                title="Drag a rectangle to capture a cropped screenshot (Shortcut: S)"
+              >
+                <Scissors size={16} />
+                <span>Snip</span>
+              </button>
+            )}
+
+            {/* Persistent Region of Interest (ROI) Lock */}
+            {(videoSource || isScreenSharing) && (
+              activeCropRegion ? (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActiveCropRegion(null);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-orange-500/20 hover:bg-orange-500/30 text-orange-400 border border-orange-500/30 rounded-full transition-all text-xs font-medium transform active:scale-95"
+                  title="Crop region active. Click to reset to full frame."
+                >
+                  <Crop size={14} />
+                  <span>ROI Locked</span>
+                  <X size={12} className="ml-0.5 hover:text-white" />
+                </button>
+              ) : (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsDefiningROI(prev => !prev);
+                    setIsSnipMode(false);
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-full transition-all text-xs font-medium border transform active:scale-95 ${
+                    isDefiningROI
+                      ? 'bg-orange-500 text-white border-orange-400 shadow-lg shadow-orange-500/20'
+                      : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border-zinc-700'
+                  }`}
+                  title="Lock a continuous crop region for all screenshots"
+                >
+                  <Crop size={14} />
+                  <span>Set ROI</span>
+                </button>
+              )
+            )}
+
+            {/* Quick Reuse of Last Crop */}
+            {(videoSource || isScreenSharing) && !activeCropRegion && lastCropRegion && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveCropRegion(lastCropRegion);
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-orange-400 border border-zinc-700 rounded-full transition-all text-xs font-medium transform active:scale-95"
+                title="Restore and lock your last crop rectangle without re-drawing"
+              >
+                <RotateCcw size={13} />
+                <span>Use Last Crop</span>
+              </button>
+            )}
 
             <div className="h-6 w-px bg-zinc-700/50" />
 
@@ -285,11 +393,22 @@ export function VideoPlayer({
 
       {/* Action Bar */}
       <div className="flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 text-zinc-500 text-sm">
             <Info size={16} />
             <span>Capturing at native resolution ({videoRef.current?.videoWidth || '...'}px)</span>
           </div>
+          {activeCropRegion && (
+            <div className="flex items-center gap-2 text-orange-400 text-xs bg-orange-500/10 border border-orange-500/20 px-3 py-1 rounded-full">
+              <span>Cropped Region Active</span>
+              <button
+                onClick={() => setActiveCropRegion(null)}
+                className="text-zinc-400 hover:text-white underline ml-1 font-medium"
+              >
+                Reset to Full Frame
+              </button>
+            </div>
+          )}
         </div>
 
         <button 
